@@ -1,6 +1,6 @@
 # ===== INSTALL SCRIPT =====
 
-$ScriptUrl = "https://raw.githubusercontent.com/USERNAME/REPO/main/SteamManifestAuto.ps1"
+$ScriptUrl = "https://raw.githubusercontent.com/sam12345z/K55STORE/refs/heads/main/SteamManifestAuto.ps1"
 $InstallPath = "$env:APPDATA\SteamManifestAuto"
 $ScriptFile = "$InstallPath\SteamManifestAuto.ps1"
 
